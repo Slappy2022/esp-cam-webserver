@@ -7,7 +7,7 @@ readonly BASE_DIR="$(
 )"
 
 main() {
-  source "${BASE_DIR}/../wifi_config.sh"
+  source "${BASE_DIR}/../wifi_config.sh" || source "${BASE_DIR}/wifi_config.sh"
   cargo +esp espflash --release --target xtensa-esp32-espidf \
     --speed 115200 \
     --monitor /dev/ttyUSB0

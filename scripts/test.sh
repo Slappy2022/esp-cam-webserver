@@ -7,7 +7,7 @@ readonly BASE_DIR="$(
 )"
 
 main() {
-  source "${BASE_DIR}/wifi_config.sh"
+  source "${BASE_DIR}/../wifi_config.sh" || source "${BASE_DIR}/wifi_config.sh"
   find . | grep -v /target | grep -v "/\." | entr -ds \
     'cargo +esp build --release --target xtensa-esp32-espidf'
 }
