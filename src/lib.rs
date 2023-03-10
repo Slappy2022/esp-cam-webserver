@@ -1,7 +1,7 @@
 use anyhow::bail;
 use embedded_svc::http::server::Method;
 use embedded_svc::wifi::{AccessPointConfiguration, ClientConfiguration, Configuration, Wifi};
-use esp_idf_hal::cam::Cam;
+use esp_cam_bindings::Pic;
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::gpio::{Gpio4, Output, PinDriver};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -157,13 +157,10 @@ pub fn init_wifi(
     Ok(wifi)
 }
 
-static CAM: Mutex<Option<Cam>> = Mutex::new(None);
 static FLASH: Mutex<Option<PinDriver<Gpio4, Output>>> = Mutex::new(None);
 pub fn http_server(
-    cam: Cam,
     flash: Option<PinDriver<'static, Gpio4, Output>>,
 ) -> Result<esp_idf_svc::http::server::EspHttpServer, anyhow::Error> {
-    *CAM.lock().unwrap() = Some(cam).into();
     *FLASH.lock().unwrap() = flash;
     use embedded_svc::io::Write;
     let mut server = EspHttpServer::new(&Default::default())?;
@@ -175,17 +172,17 @@ pub fn http_server(
             Ok(())
         })?
         .fn_handler("/camera", Method::Get, |req| {
-            let mut cam = CAM.lock()?;
             let mut flash = FLASH.lock()?;
             let mut flash = Flash {
                 pin: flash.as_mut(),
             };
             flash.on();
-            let pic = cam
-                .as_mut()
-                .ok_or("cam not set")?
-                .pic()
-                .ok_or("failed to take pic")?;
+            let pic = Pic::new().ok_or("failed to take pic")?;
+            let width = pic.width();
+            let height = pic.height();
+            let data = pic.data();
+            let len = data.len();
+            println!("{width}x{height} {len}");
             flash.off();
 
             let len_str = format!("{}", pic.data().len());

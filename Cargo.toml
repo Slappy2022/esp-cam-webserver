@@ -16,9 +16,10 @@ pio = ["esp-idf-sys/pio"]
 [dependencies]
 anyhow = {version = "1", features = ["backtrace"]}
 embedded-svc = "0.24"
-esp-idf-hal = { git = "https://github.com/Slappy2022/esp-idf-hal" }
-esp-idf-svc = { git = "https://github.com/Slappy2022/esp-idf-svc", branch = "0.45.0", features = ["experimental"] }
-esp-idf-sys = { git = "https://github.com/Slappy2022/esp-idf-sys", features = ["binstart"] }
+esp-cam-bindings = { git = "https://github.com/Slappy2022/esp-cam-bindings" }
+esp-idf-hal = "0.40.1"
+esp-idf-svc = { version = "0.45.0", features = ["experimental"] }
+esp-idf-sys = { version = "0.32", features = ["binstart"] }
 log = "0.4"
 
 [build-dependencies]
