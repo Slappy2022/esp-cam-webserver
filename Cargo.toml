@@ -18,6 +18,8 @@ anyhow = {version = "1", features = ["backtrace"]}
 embedded-svc = "0.24"
 esp-cam-bindings = { git = "https://github.com/Slappy2022/esp-cam-bindings" }
 esp-idf-hal = "0.40.1"
+esp-idf-hal-ext = { path = "../esp-idf-hal-ext" }
+#esp-idf-hal-ext = { git = "https://github.com/Slappy2022/esp-idf-hal-ext" }
 esp-idf-svc = { version = "0.45.0", features = ["experimental"] }
 esp-idf-sys = { version = "0.32", features = ["binstart"] }
 log = "0.4"

@@ -4,8 +4,10 @@ use esp_idf_hal::gpio::{IOPin, InputPin, PinDriver};
 use esp_idf_hal::prelude::FromValueType;
 use esp_idf_hal::prelude::Peripherals;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_hal_ext::sdmmc::Sdmmc;
+use std::sync::{Arc, Mutex};
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> anyhow::Result<()> {
     esp_idf_sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
     let peripherals = Peripherals::take().unwrap();
@@ -46,9 +48,10 @@ fn main() -> Result<(), anyhow::Error> {
     let sysloop = EspSystemEventLoop::take()?;
 
     let mut _wifi = esp_cam_webserver::init_wifi(peripherals.modem, sysloop.clone())?;
+    let sdcard = Arc::new(Mutex::new(Sdmmc::new("/sdcard")?));
 
     let flash = esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio4)?;
-    let _http = esp_cam_webserver::http_server(Some(flash))?;
+    let _http = esp_cam_webserver::http_server(Some(flash), sdcard)?;
     //let _http = esp_cam_webserver::http_server(None)?;
     let mut led = PinDriver::output(peripherals.pins.gpio33)?;
     loop {

@@ -1,16 +1,19 @@
+mod sdmmc;
+
 use anyhow::bail;
 use embedded_svc::http::server::Method;
 use embedded_svc::wifi::{AccessPointConfiguration, ClientConfiguration, Configuration, Wifi};
 use esp_cam_bindings::Pic;
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::gpio::{Gpio4, Output, PinDriver};
+use esp_idf_hal_ext::sdmmc::Sdmmc;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::netif::{EspNetif, EspNetifWait};
 use esp_idf_svc::wifi::{EspWifi, WifiWait};
 use log::*;
 use std::net::Ipv4Addr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const SSID: &str = env!("RUST_ESP32_STD_DEMO_WIFI_SSID");
@@ -39,52 +42,6 @@ impl<'a> Drop for Flash<'a> {
         self.off();
     }
 }
-
-/*
-fn rgb888_bmp_header(pic: &Pic, data_len: usize) -> Vec<u8> {
-    let header_len = 54u32;
-    let mut payload = Vec::<u8>::with_capacity(header_len as usize);
-
-    // 2 bytes
-    payload.extend_from_slice(b"BM");
-
-    // 12 bytes
-    payload.extend_from_slice(&(header_len + data_len as u32).to_le_bytes());
-    payload.extend_from_slice(&[0x00; 4]); // Creators
-    payload.extend_from_slice(&header_len.to_le_bytes());
-
-    // 40 bytes
-    payload.extend_from_slice(&40u32.to_le_bytes()); // Dip header length
-    payload.extend_from_slice(&(pic.width() as u32).to_le_bytes());
-    payload.extend_from_slice(&(pic.height() as u32).to_le_bytes());
-    payload.extend_from_slice(&1u16.to_le_bytes()); // num planes
-    payload.extend_from_slice(&24u16.to_le_bytes()); // bits per pixel
-    payload.extend_from_slice(&0u32.to_le_bytes()); // compress type
-    payload.extend_from_slice(&(pic.data().len() as u32).to_le_bytes()); // data size
-
-    payload.extend_from_slice(&(pic.width() as i32).to_le_bytes());
-    payload.extend_from_slice(&(pic.height() as i32).to_le_bytes());
-    payload.extend_from_slice(&0u32.to_le_bytes()); // num colors
-    payload.extend_from_slice(&0u32.to_le_bytes()); // num imp colors
-    payload
-}
-fn raw_rgb565_to_rgb888_bmp(pic: &Pic) -> Vec<u8> {
-    let header_len = 54u32;
-    let data_len = pic.width() * pic.height() * 3;
-    let mut payload = Vec::<u8>::with_capacity(header_len as usize + data_len);
-    let header = rgb888_bmp_header(pic, data_len);
-    payload.extend_from_slice(&header);
-
-    for i in (0..pic.data().len()).step_by(2) {
-        let color = u16::from_be_bytes([pic.data()[i], pic.data()[i + 1]]);
-        let red = (color & 0xf800) >> 11;
-        let green = (color & 0x07e0) >> 5;
-        let blue = color & 0x001f;
-        payload.extend_from_slice(&[(green as u8) << 2, (blue as u8) << 3, (red as u8) << 3]);
-    }
-    payload
-}
-*/
 
 pub fn init_wifi(
     modem: impl esp_idf_hal::peripheral::Peripheral<P = esp_idf_hal::modem::Modem> + 'static,
@@ -160,17 +117,24 @@ pub fn init_wifi(
 static FLASH: Mutex<Option<PinDriver<Gpio4, Output>>> = Mutex::new(None);
 pub fn http_server(
     flash: Option<PinDriver<'static, Gpio4, Output>>,
+    sdcard: Arc<Mutex<Sdmmc>>,
 ) -> Result<esp_idf_svc::http::server::EspHttpServer, anyhow::Error> {
     *FLASH.lock().unwrap() = flash;
     use embedded_svc::io::Write;
     let mut server = EspHttpServer::new(&Default::default())?;
 
     server
-        .fn_handler("/", Method::Get, |req| {
+        .fn_handler("/time", Method::Get, |req| {
+            let unixtime = get_unixtime()?;
             req.into_ok_response()?
-                .write_all("Hello, World!".as_bytes())?;
+                .write_all(format!("{unixtime}").as_bytes())?;
             Ok(())
         })?
+        .handler(
+            "/sdcard",
+            Method::Get,
+            crate::sdmmc::SdmmcHandler::new(sdcard),
+        )?
         .fn_handler("/camera", Method::Get, |req| {
             let mut flash = FLASH.lock()?;
             let mut flash = Flash {
@@ -194,20 +158,52 @@ pub fn http_server(
             let mut resp = req.into_response(200, None, headers)?;
             resp.write_all(pic.data())?;
 
-            /* RGB565
-            let payload = raw_rgb565_to_rgb888_bmp(&pic);
-            let len_str = format!("{}", payload.len());
-
-            let headers = &[
-                ("Content-Type", "image/bmp"),
-                ("Content-Length", &len_str),
-                // Comment to force multiline
-            ];
-            let mut resp = req.into_response(200, None, headers)?;
-            resp.write_all(&payload)?;
-            */
             Ok(())
         })?;
 
     Ok(server)
+}
+
+pub fn get_unixtime() -> anyhow::Result<u32> {
+    use embedded_svc::http::client::*;
+    use embedded_svc::io::Read;
+    use esp_idf_svc::http::client::*;
+    let url = "http://worldtimeapi.org/api/timezone/Etc/UTC";
+    let mut client = Client::wrap(EspHttpConnection::new(&Configuration::default())?);
+
+    let mut response = client.get(&url)?.submit()?;
+    let mut body = [0u8; 1024];
+
+    {
+        let len = embedded_svc::utils::io::try_read_full(&mut response, &mut body)
+            .map_err(|err| err.0)?;
+        let body = core::str::from_utf8(&body[..len])?;
+
+        for s in body.split(",") {
+            let mut kv = s.split(":");
+            let key = match kv.next() {
+                Some(key) => key,
+                None => continue,
+            };
+            if key != "\"unixtime\"" {
+                continue;
+            }
+            let value = match kv.next() {
+                Some(value) => value,
+                None => continue,
+            };
+            if !kv.next().is_none() {
+                continue;
+            }
+            let unixtime: u32 = match value.parse() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            return Ok(unixtime);
+        }
+    }
+
+    // Complete the response
+    while response.read(&mut body)? > 0 {}
+    Err(anyhow::Error::msg("Error getting time"))
 }
